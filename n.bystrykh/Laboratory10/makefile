@@ -6,9 +6,9 @@ SRC = commend_code.c
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-  $(CC) $(CFLAGS) -o $(TARGET) $(SRC)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
 
 clean:
-  rm -f $(TARGET)
+	rm -f $(TARGET)
 
 .PHONY: all clean
