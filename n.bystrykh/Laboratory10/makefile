@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall
 TARGET = start
-SRC = commend_code.c
+SRC = main.c
 
 all: $(TARGET)
 

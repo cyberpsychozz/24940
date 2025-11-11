@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall
 TARGET = start
-SRC = parent_child.c
+SRC = main.c
 
 all: $(TARGET)
 
