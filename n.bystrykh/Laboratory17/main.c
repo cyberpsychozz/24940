@@ -91,7 +91,8 @@ void wrap_line(void) {
 
 int main(void) {
     enable_raw_mode();
-    printf("Введите текст (Ctrl+D в начале строки — выход, макс. 40 символов на строке):\r\n> ");
+    printf("Управление: CTRL + D в начале строки - выход\r\n CTRL+U - стирается последняя строка\r\n CTRL + W - стирает последнее слово\r\n");
+    printf("Введите текст:\r\n> ");
 
     char c;
     while (read(STDIN_FILENO, &c, 1) == 1) {
