@@ -27,7 +27,7 @@ int main() {
         close(pipefd[0]);
 
         // Текст для отправки (смешанный регистр)
-        const char *text = "Hello, World! This Is A Test String.\n";
+        const char *text = "Hello, World! NSu.\n";
 
         // Записываем текст в канал
         write(pipefd[1], text, strlen(text));
