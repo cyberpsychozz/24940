@@ -3,8 +3,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <ctype.h>  // Для toupper
-#include <string.h> // Для strlen
+#include <ctype.h>  
+#include <string.h> 
 
 #define SOCKET_PATH "/tmp/my_socket"
 #define BUFFER_SIZE 1024

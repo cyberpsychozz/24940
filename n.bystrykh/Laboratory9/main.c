@@ -48,6 +48,7 @@ int main(int argc, char *argv[]) {
         if (choice == 1) {
             // Часть 1: Родитель печатает текст сразу
             printf("[PARENT] Printing text while child runs... (PID: %d)\n", getpid());
+            
             printf("[PARENT] Parent continues printing. (PID: %d)\n", getpid());
         } else if (choice == 2) {
             // Часть 2: Родитель допечатает только после завершения дочернего

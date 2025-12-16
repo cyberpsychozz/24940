@@ -1,128 +1,106 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
+#include <ctype.h>
+#include <fcntl.h>
+#include <aio.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/epoll.h>
-#include <ctype.h>
-#include <string.h>
-#include <errno.h>
-#include <fcntl.h>
 
-#define SOCKET_PATH "/tmp/my_socket"
-#define MAX_EVENTS 10
-#define BUFFER_SIZE 1024
+#define SOCKET_PATH "./socket"
+#define MAX_CLIENTS 20000
+#define BUFFER_SIZE 4096
+#define TARGET_CLIENTS 10000
+
+struct client {
+    int fd;
+    struct aiocb cb;
+    char buffer[BUFFER_SIZE];
+} clients[MAX_CLIENTS];
+
+int server_fd;
+volatile int total_connected = 1;
+volatile int total_finished = 0;
+
+_Atomic int active_clients = 0;
+
+void aio_completion_handler(union sigval sv) {
+    struct aiocb *cb = sv.sival_ptr;
+    struct client *c = NULL;
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (&clients[i].cb == cb) {
+            c = &clients[i];
+            break;
+        }
+    }
+    if (!c || c->fd == -1) return;
+
+    ssize_t n = aio_return(cb);
+    if (n > 0) {
+        for (ssize_t j = 0; j < n; j++)
+            c->buffer[j] = toupper((unsigned char)c->buffer[j]);
+        write(STDOUT_FILENO, c->buffer, n);
+        aio_read(cb);
+    } else {
+        close(c->fd);
+        c->fd = -1;
+        total_finished++;
+        active_clients--;
+    }
+}
 
 int main() {
-    int server_fd, epoll_fd;
-    struct sockaddr_un addr;
-    struct epoll_event ev, events[MAX_EVENTS];
-    char buffer[BUFFER_SIZE];
-    ssize_t nread;
-
-    // Удаляем старый сокет
     unlink(SOCKET_PATH);
-
-    // Создаём сокет
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_fd == -1) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // Делаем сокет non-blocking
     fcntl(server_fd, F_SETFL, O_NONBLOCK);
-
-    // Привязываем к пути
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
-    }
 
-    // Слушаем подключения
-    if (listen(server_fd, 5) == -1) {
-        perror("listen failed");
-        exit(EXIT_FAILURE);
-    }
+    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(server_fd, 512);
 
-    // Создаём epoll
-    epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1) {
-        perror("epoll_create1 failed");
-        exit(EXIT_FAILURE);
-    }
+    for (int i = 0; i < MAX_CLIENTS; i++) clients[i].fd = -1;
 
-    // Добавляем серверный сокет в epoll
-    ev.events = EPOLLIN;
-    ev.data.fd = server_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1) {
-        perror("epoll_ctl failed");
-        exit(EXIT_FAILURE);
-    }
+    printf("AIO-сервер запущен\n");
 
-    printf("[Сервер] Ожидание подключений...\n");
+    while (total_finished < TARGET_CLIENTS) {
+        int fd;
+        while ((fd = accept(server_fd, NULL, NULL)) != -1) {
+            if (total_connected >= MAX_CLIENTS) { close(fd); break; }
 
-    while (1) {
-        // Ждём событий (асинхронно)
-        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);  
-        if (nfds == -1) {
-            perror("epoll_wait failed");
-            exit(EXIT_FAILURE);
-        }
+            for (int i = 0; i < MAX_CLIENTS; i++) {
+                if (clients[i].fd == -1) {
+                    clients[i].fd = fd;
+                    total_connected++;
+                    active_clients++;
 
-        for (int i = 0; i < nfds; i++) {
-            if (events[i].data.fd == server_fd) {
-                // Новое подключение
-                int new_client = accept(server_fd, NULL, NULL);
-                if (new_client == -1) {
-                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                        perror("accept failed");
-                    }
-                    continue;
-                }
+                    memset(&clients[i].cb, 0, sizeof(struct aiocb));
+                    clients[i].cb.aio_fildes = fd;
+                    clients[i].cb.aio_buf = clients[i].buffer;
+                    clients[i].cb.aio_nbytes = BUFFER_SIZE;
+                    clients[i].cb.aio_sigevent.sigev_notify = SIGEV_THREAD;
+                    clients[i].cb.aio_sigevent.sigev_notify_function = aio_completion_handler;
+                    clients[i].cb.aio_sigevent.sigev_value.sival_ptr = &clients[i].cb;
 
-                // Делаем клиента non-blocking
-                fcntl(new_client, F_SETFL, O_NONBLOCK);
-
-                // Добавляем в epoll
-                ev.events = EPOLLIN | EPOLLET;  // Edge-triggered
-                ev.data.fd = new_client;
-                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client, &ev) == -1) {
-                    perror("epoll_ctl add client failed");
-                    close(new_client);
-                    continue;
-                }
-
-                printf("[Сервер] Новый клиент подключён (fd: %d)\n", new_client);
-            } else {
-                // Данные от клиента
-                int fd = events[i].data.fd;
-                nread = read(fd, buffer, BUFFER_SIZE - 1);
-                if (nread <= 0) {
-                    if (nread == 0) {
-                        printf("[Сервер] Клиент отключён (fd: %d)\n", fd);
-                    } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                        perror("read failed");
-                    }
-                    // Закрываем и удаляем из epoll
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-                    close(fd);
-                } else {
-                    buffer[nread] = '\0';
-
-                    // Переводим в верхний регистр и выводим
-                    for (ssize_t j = 0; j < nread; j++) {
-                        putchar(toupper(buffer[j]));
-                    }
-                    fflush(stdout);
+                    aio_read(&clients[i].cb);
+                    break;
                 }
             }
         }
+
+        if (total_connected >= TARGET_CLIENTS && total_connected % 1000 == 999) {
+            printf("[AIO] Подключено: %d | Активно: %d | Завершено: %d\n",
+                   total_connected, (int)active_clients, total_finished);
+        }
+
+        usleep(10000);
     }
 
+    printf("AIO-сервер завершается\n");
     close(server_fd);
     unlink(SOCKET_PATH);
     return 0;

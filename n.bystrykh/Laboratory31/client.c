@@ -1,40 +1,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <string.h>
 
-#define SOCKET_PATH "/tmp/my_socket"
+#define SOCKET_PATH "./socket"
+#define BUFFER_SIZE 256
 
 int main() {
-    int client_fd;
+    int sock_fd;
     struct sockaddr_un addr;
-    const char *text = "Hello, World! This Is A Test String.\n";
 
-    // Создаём сокет
-    client_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (client_fd == -1) {
-        perror("socket failed");
+    if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+        perror("socket");
         exit(EXIT_FAILURE);
     }
 
-    // Подключаемся
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
-    if (connect(client_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        perror("connect failed");
+
+    if (connect(sock_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        perror("connect");
+        close(sock_fd);
         exit(EXIT_FAILURE);
     }
 
-    printf("[Клиент] Подключён. Отправка текста...\n");
+    // printf("Подключено к серверу. Отправка сообщений...\n");
 
-    write(client_fd, text, strlen(text));
+    const char *messages[] = {
+        "Hello World!\n",
+        "Test Message!!!",
+        NULL
+    };
 
-    close(client_fd);
+    for (int i = 0; messages[i] != NULL; i++) {
+        if (write(sock_fd, messages[i], strlen(messages[i])) == -1) {
+            perror("write");
+            break;
+        }
+        usleep(3000);
+    }
 
-    printf("[Клиент] Отправлено. Завершение.\n");
+    // printf("Сообщения отправлены.\n");
+
+    close(sock_fd);
 
     return 0;
 }
